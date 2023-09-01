@@ -25,10 +25,19 @@ type CapturePrintWriter struct {
 var conn *websocket.Conn
 var wsMux sync.Mutex
 
-func safeWrite(conn *websocket.Conn, messageType int, data []byte) error {
+func safeWrite(data []byte) {
 	wsMux.Lock()
 	defer wsMux.Unlock()
-	return conn.WriteMessage(messageType, data)
+	if conn != nil {
+		if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
+			if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+				log.Printf("Client closed the connection: %v", err)
+			} else {
+				log.Printf("Failed to write message: %v", err)
+			}
+			conn = nil
+		}
+	}
 }
 
 func (w *CapturePrintWriter) Write(p []byte) (n int, err error) {
@@ -40,17 +49,7 @@ func (w *CapturePrintWriter) Write(p []byte) (n int, err error) {
 	// Print the decoded data
 	fmt.Printf("[%s] %s", w.source, string(decodedData))
 	dataWithSource := fmt.Sprintf("[%s] %s", w.source, string(decodedData))
-	if conn != nil {
-		// panic: concurrent write to websocket connection
-		if err := safeWrite(conn, websocket.TextMessage, []byte(dataWithSource)); err != nil {
-			conn = nil
-			if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				log.Printf("Client closed the connection: %v", err)
-			} else {
-				log.Printf("Failed to write message: %v", err)
-			}
-		}
-	}
+	safeWrite([]byte(dataWithSource))
 	return len(p), nil
 }
 
@@ -96,7 +95,7 @@ func serveHTML(w http.ResponseWriter, r *http.Request) {
 	log.Println("host: ", host)
 
 	content := strings.Replace(htmlContent, "localhost", r.Host, -1)
-	w.Write([]byte(content))
+	_, _ = w.Write([]byte(content))
 }
 
 func startProcess(cmdStr []string, cwd string) {
@@ -105,7 +104,7 @@ func startProcess(cmdStr []string, cwd string) {
 	stderrCpw := &CapturePrintWriter{source: "stderr"}
 	if len(cwd) > 0 {
 		log.Println("chdir to ", cwd)
-		os.Chdir(cwd)
+		_ = os.Chdir(cwd)
 	}
 	log.Println("start command: ", cmdStr)
 	cmd := exec.Command(cmdStr[0], cmdStr[1:]...)
@@ -146,14 +145,14 @@ func main() {
 	flag.IntVar(&port, "port", 17862, "Port to listen on")
 	flag.StringVar(&cwd, "cwd", "", "chdir to cwd before run command")
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: %s [options] command [args...]\n", os.Args[0])
+		_, _ = fmt.Fprintf(os.Stderr, "Usage: %s [options] command [args...]\n", os.Args[0])
 		flag.PrintDefaults()
 	}
 	flag.Parse()
 	commandAndArgs := flag.Args()
 	fmt.Printf("command and args: %+q\n", commandAndArgs)
 	if len(commandAndArgs) == 0 {
-		fmt.Fprintf(os.Stderr, "Command not provided. \nUsage: %s [options] command [args...]\n", os.Args[0])
+		_, _ = fmt.Fprintf(os.Stderr, "Command not provided. \nUsage: %s [options] command [args...]\n", os.Args[0])
 		flag.PrintDefaults()
 		return
 	}
@@ -161,5 +160,6 @@ func main() {
 	http.HandleFunc("/logs", handleLogs)
 	http.HandleFunc("/", serveHTML)
 	addr := interfaceAddr + ":" + fmt.Sprintf("%d", port)
+	_, _ = fmt.Printf("listening on http://%s\n", addr)
 	log.Fatal(http.ListenAndServe(addr, nil))
 }

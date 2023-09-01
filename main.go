@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -19,13 +18,10 @@ import (
 )
 
 type CapturePrintWriter struct {
-	buf  *bytes.Buffer
-	conn *websocket.Conn
+	source string
 }
 
-func (w *CapturePrintWriter) setConn(c *websocket.Conn) {
-	w.conn = c
-}
+var conn *websocket.Conn
 
 func (w *CapturePrintWriter) Write(p []byte) (n int, err error) {
 
@@ -33,11 +29,12 @@ func (w *CapturePrintWriter) Write(p []byte) (n int, err error) {
 	decoder := simplifiedchinese.GBK.NewDecoder()
 	decodedData, _ := ioutil.ReadAll(transform.NewReader(bytes.NewReader(p), decoder))
 
-	// Print the decoded data to the standard output
-	os.Stdout.Write(decodedData)
-	if w.conn != nil {
-		if err := w.conn.WriteMessage(websocket.TextMessage, decodedData); err != nil {
-			w.conn = nil
+	// Print the decoded data
+	fmt.Printf("[%s] %s", w.source, string(decodedData))
+	dataWithSource := fmt.Sprintf("[%s] %s", w.source, string(decodedData))
+	if conn != nil {
+		if err := conn.WriteMessage(websocket.TextMessage, []byte(dataWithSource)); err != nil {
+			conn = nil
 			if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
 				log.Printf("Client closed the connection: %v", err)
 			} else {
@@ -53,11 +50,6 @@ var upgrader = websocket.Upgrader{
 		return true
 	},
 }
-
-var (
-	buf    bytes.Buffer
-	bufMux sync.Mutex
-)
 
 const htmlContent = `
 <!DOCTYPE html>
@@ -98,18 +90,18 @@ func serveHTML(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(content))
 }
 
-var cpw = &CapturePrintWriter{buf: &buf}
-
 func startProcess(cmdStr []string, cwd string) {
 	defer os.Exit(0)
+	stdoutCpw := &CapturePrintWriter{source: "stdout"}
+	stderrCpw := &CapturePrintWriter{source: "stderr"}
 	if len(cwd) > 0 {
 		log.Println("chdir to ", cwd)
 		os.Chdir(cwd)
 	}
 	log.Println("start command: ", cmdStr)
 	cmd := exec.Command(cmdStr[0], cmdStr[1:]...)
-	cmd.Stdout = cpw
-	cmd.Stderr = cpw
+	cmd.Stdout = stdoutCpw
+	cmd.Stderr = stderrCpw
 
 	if err := cmd.Start(); err != nil {
 		log.Fatalf("Failed to start command: %v", err)
@@ -121,16 +113,16 @@ func startProcess(cmdStr []string, cwd string) {
 	}
 }
 func handleLogs(w http.ResponseWriter, r *http.Request) {
-	conn, err := upgrader.Upgrade(w, r, nil)
+	c, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("Failed to upgrade to websocket: %v", err)
 		return
 	}
-	defer conn.Close()
-	cpw.setConn(conn)
+	defer c.Close()
+	conn = c
 	for {
 		time.Sleep(time.Second * 1)
-		if cpw.conn == nil {
+		if conn == nil {
 			break
 		}
 	}

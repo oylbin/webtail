@@ -1,4 +1,4 @@
-module wslog
+module webtail
 
 go 1.18
 

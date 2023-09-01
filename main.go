@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -22,6 +23,13 @@ type CapturePrintWriter struct {
 }
 
 var conn *websocket.Conn
+var wsMux sync.Mutex
+
+func safeWrite(conn *websocket.Conn, messageType int, data []byte) error {
+	wsMux.Lock()
+	defer wsMux.Unlock()
+	return conn.WriteMessage(messageType, data)
+}
 
 func (w *CapturePrintWriter) Write(p []byte) (n int, err error) {
 
@@ -33,7 +41,8 @@ func (w *CapturePrintWriter) Write(p []byte) (n int, err error) {
 	fmt.Printf("[%s] %s", w.source, string(decodedData))
 	dataWithSource := fmt.Sprintf("[%s] %s", w.source, string(decodedData))
 	if conn != nil {
-		if err := conn.WriteMessage(websocket.TextMessage, []byte(dataWithSource)); err != nil {
+		// panic: concurrent write to websocket connection
+		if err := safeWrite(conn, websocket.TextMessage, []byte(dataWithSource)); err != nil {
 			conn = nil
 			if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
 				log.Printf("Client closed the connection: %v", err)

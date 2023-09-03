@@ -9,8 +9,10 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -25,6 +27,9 @@ type CapturePrintWriter struct {
 var conn *websocket.Conn
 var wsMux sync.Mutex
 var debug bool
+
+// Assuming cmd is a global or accessible variable that represents the started program
+var cmd *exec.Cmd
 
 func safeWrite(data []byte) {
 	wsMux.Lock()
@@ -110,7 +115,7 @@ func startProcess(cmdStr []string, cwd string) {
 		_ = os.Chdir(cwd)
 	}
 	log.Println("start command: ", cmdStr)
-	cmd := exec.Command(cmdStr[0], cmdStr[1:]...)
+	cmd = exec.Command(cmdStr[0], cmdStr[1:]...)
 	cmd.Stdout = stdoutCpw
 	cmd.Stderr = stderrCpw
 
@@ -146,6 +151,12 @@ func handleLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Println("Websocket connection closed")
 }
+func startWebsocketServer(addr string) {
+	http.HandleFunc("/logs", handleLogs)
+	http.HandleFunc("/", serveHTML)
+	log.Printf("listening on http://%s\n", addr)
+	log.Fatal(http.ListenAndServe(addr, nil))
+}
 func main() {
 	var interfaceAddr string
 	var port int
@@ -168,9 +179,19 @@ func main() {
 		return
 	}
 	go startProcess(commandAndArgs, cwd)
-	http.HandleFunc("/logs", handleLogs)
-	http.HandleFunc("/", serveHTML)
 	addr := interfaceAddr + ":" + fmt.Sprintf("%d", port)
-	log.Printf("listening on http://%s\n", addr)
-	log.Fatal(http.ListenAndServe(addr, nil))
+	go startWebsocketServer(addr)
+
+	// Listen for termination signals
+	terminate := make(chan os.Signal, 1)
+	signal.Notify(terminate, syscall.SIGINT, syscall.SIGTERM)
+
+	// Wait for termination signal
+	<-terminate
+
+	// Kill the started program
+	if cmd != nil && cmd.Process != nil {
+		cmd.Process.Kill()
+	}
+
 }

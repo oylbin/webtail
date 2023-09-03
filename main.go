@@ -24,6 +24,7 @@ type CapturePrintWriter struct {
 
 var conn *websocket.Conn
 var wsMux sync.Mutex
+var debug bool
 
 func safeWrite(data []byte) {
 	wsMux.Lock()
@@ -47,7 +48,9 @@ func (w *CapturePrintWriter) Write(p []byte) (n int, err error) {
 	decodedData, _ := ioutil.ReadAll(transform.NewReader(bytes.NewReader(p), decoder))
 
 	// Print the decoded data
-	fmt.Printf("[%s] %s", w.source, string(decodedData))
+	if debug {
+		fmt.Printf("[%s] %s", w.source, string(decodedData))
+	}
 	dataWithSource := fmt.Sprintf("[%s] %s", w.source, string(decodedData))
 	safeWrite([]byte(dataWithSource))
 	return len(p), nil
@@ -133,6 +136,13 @@ func handleLogs(w http.ResponseWriter, r *http.Request) {
 		if conn == nil {
 			break
 		}
+		// call readMessage, it handles ping/pong internally
+		messageType, message, err := c.ReadMessage()
+		if err != nil {
+			log.Printf("Failed to read message: %v", err)
+			return
+		}
+		log.Printf("Received message: %d,  %s", messageType, message)
 	}
 	log.Println("Websocket connection closed")
 }
@@ -144,13 +154,14 @@ func main() {
 	flag.StringVar(&interfaceAddr, "interface", "0.0.0.0", "Interface to bind to")
 	flag.IntVar(&port, "port", 17862, "Port to listen on")
 	flag.StringVar(&cwd, "cwd", "", "chdir to cwd before run command")
+	flag.BoolVar(&debug, "debug", false, "Enable debug mode")
 	flag.Usage = func() {
 		_, _ = fmt.Fprintf(os.Stderr, "Usage: %s [options] command [args...]\n", os.Args[0])
 		flag.PrintDefaults()
 	}
 	flag.Parse()
 	commandAndArgs := flag.Args()
-	fmt.Printf("command and args: %+q\n", commandAndArgs)
+	log.Printf("command and args: %+q\n", commandAndArgs)
 	if len(commandAndArgs) == 0 {
 		_, _ = fmt.Fprintf(os.Stderr, "Command not provided. \nUsage: %s [options] command [args...]\n", os.Args[0])
 		flag.PrintDefaults()
@@ -160,6 +171,6 @@ func main() {
 	http.HandleFunc("/logs", handleLogs)
 	http.HandleFunc("/", serveHTML)
 	addr := interfaceAddr + ":" + fmt.Sprintf("%d", port)
-	_, _ = fmt.Printf("listening on http://%s\n", addr)
+	log.Printf("listening on http://%s\n", addr)
 	log.Fatal(http.ListenAndServe(addr, nil))
 }

@@ -123,9 +123,13 @@ func startProcess(cmdStr []string, cwd string) {
 		log.Fatalf("Failed to start command: %v", err)
 		return
 	}
+	// get pid of the started process
+	log.Printf("Started command with pid: %d", cmd.Process.Pid)
 
 	if err := cmd.Wait(); err != nil {
 		log.Printf("Command finished with error: %v", err)
+	} else {
+		log.Println("Command finished successfully")
 	}
 }
 func handleLogs(w http.ResponseWriter, r *http.Request) {
@@ -188,10 +192,16 @@ func main() {
 
 	// Wait for termination signal
 	<-terminate
+	log.Println("Termination signal received")
 
 	// Kill the started program
 	if cmd != nil && cmd.Process != nil {
+		log.Println("kill process")
 		cmd.Process.Kill()
+		// wait for process to exit, otherwise it will become zombie
+		log.Println("wait for process to exit")
+		cmd.Wait()
+		log.Println("process exited")
 	}
 
 }

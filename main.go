@@ -155,9 +155,30 @@ func handleLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Println("Websocket connection closed")
 }
+func handleStatus(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	pid := 0
+	status := "stopped"
+	if cmd != nil && cmd.Process != nil {
+		pid = cmd.Process.Pid
+		status = "running"
+	}
+	content := fmt.Sprintf(`{"pid": %d, "status": "%s"}`, pid, status)
+	_, _ = w.Write([]byte(content))
+}
+func handleStop(w http.ResponseWriter, r *http.Request) {
+	// return empty response with 200 status code
+	w.WriteHeader(http.StatusOK)
+	if cmd != nil && cmd.Process != nil {
+		log.Println("stop command: ", cmd.Process.Pid)
+		_ = cmd.Process.Kill()
+	}
+}
 func startWebsocketServer(addr string) {
 	http.HandleFunc("/logs", handleLogs)
 	http.HandleFunc("/", serveHTML)
+	http.HandleFunc("/admin/status", handleStatus)
+	http.HandleFunc("/admin/stop", handleStop)
 	log.Printf("listening on http://%s\n", addr)
 	log.Fatal(http.ListenAndServe(addr, nil))
 }
